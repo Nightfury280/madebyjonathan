@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Toilet Roll Run</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#071a33;color:white;font-family:system-ui,Segoe UI,Arial,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:14px}
+  .game-wrap{width:min(100%,1000px)}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:clamp(24px,4vw,38px);margin:0;color:#fff;text-shadow:3px 3px #0876b9}
+  .stats{display:flex;gap:8px;flex-wrap:wrap}
+  .pill{background:#12375c;border:2px solid #2d8dcc;border-radius:12px;padding:7px 12px;font-weight:800}
+  canvas{display:block;width:100%;height:auto;aspect-ratio:16/9;background:#b9e9ff;border:3px solid #328dcc;border-radius:16px;box-shadow:0 12px 30px #0008;touch-action:none}
+  .under{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
+  .help{color:#c6e7ff;font-size:14px}
+  button{border:0;border-radius:12px;padding:11px 18px;font-weight:900;font-size:15px;color:white;background:#16a34a;box-shadow:0 4px #087238;cursor:pointer}
+  button:active{transform:translateY(2px);box-shadow:0 2px #087238}
+  .controls{display:flex;gap:8px;align-items:center}
+  .controls button{background:#087fc1;box-shadow:0 4px #07558a;min-width:52px}
+  .overlay{position:relative}
+  #message{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;background:#06172dc9;border-radius:13px}
+  #message .card{max-width:430px}
+  #message h2{font-size:clamp(28px,5vw,44px);margin:0 0 8px;color:#ffdf55;text-shadow:3px 3px #8b4c00}
+  #message p{line-height:1.45;margin:8px 0 18px}
+  #message button{font-size:18px;padding:13px 28px}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="game-wrap">
+  <div class="top">
+    <h1>🧻 TOILET ROLL RUN</h1>
+    <div class="stats">
+      <div class="pill">🧻 Rolls: <span id="rolls">0</span>/15</div>
+      <div class="pill">⭐ Score: <span id="score">0</span></div>
+      <div class="pill">⏱️ <span id="time">0</span>s</div>
+    </div>
+  </div>
+  <div class="overlay">
+    <canvas id="game" width="960" height="540" aria-label="Toilet Roll Run game"></canvas>
+    <div id="message">
+      <div class="card">
+        <h2>TOILET ROLL RUN!</h2>
+        <p>Roll through the bathroom, collect <b>15 toilet rolls</b>, and dodge the slippery puddles and plunger traps!</p>
+        <p><b>Move:</b> ← → or A / D &nbsp; <b>Jump:</b> Space / ↑</p>
+        <button id="start">PLAY GAME</button>
+      </div>
+    </div>
+  </div>
+  <div class="under">
+    <div class="help">Keyboard: ← → / A D to move · Space or ↑ to jump · P to pause</div>
+    <div class="controls">
+      <button id="left" aria-label="Move left">◀</button>
+      <button id="jump" aria-label="Jump">⬆ JUMP</button>
+      <button id="right" aria-label="Move right">▶</button>
+      <button id="restart" style="background:#dc3545;box-shadow:0 4px #8f1824">↻ Restart</button>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+const canvas=document.getElementById('game'), ctx=canvas.getContext('2d');
+const W=canvas.width,H=canvas.height;
+const $=id=>document.getElementById(id);
+let running=false, paused=false, gameOver=false, last=0, elapsed=0, score=0, collected=0, spawnTimer=0, speed=250;
+let player, items=[], hazards=[], particles=[], laneLines=[];
+const keys={left:false,right:false};
+function reset(){
+  player={x:W/2,y:H-105,w:46,h:58,vy:0,ground:true,inv:0};
+  items=[];hazards=[];particles=[];elapsed=0;score=0;collected=0;spawnTimer=0;speed=250;gameOver=false;paused=false;
+  for(let i=0;i<5;i++) spawnItem(-i*125-80);
+  for(let i=0;i<3;i++) spawnHazard(-i*240-200);
+  updateHUD();
+}
+function updateHUD(){ $('rolls').textContent=collected; $('score').textContent=score; $('time').textContent=Math.floor(elapsed); }
+function spawnItem(y=-50){
+  const lane=120+Math.random()*(W-240);
+  items.push({x:lane,y,spin:Math.random()*6.28});
+}
+function spawnHazard(y=-60){
+  hazards.push({x:100+Math.random()*(W-200),y,w:42+Math.random()*15,h:30+Math.random()*8,type:Math.random()<.5?'puddle':'plunger'});
+}
+function roundedRect(x,y,w,h,r,fill,stroke){
+  ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fillStyle=fill;ctx.fill();
+  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=3;ctx.stroke();}
+}
+function drawRoll(x,y,s=1){
+  ctx.save();ctx.translate(x,y);ctx.scale(s,s);
+  ctx.fillStyle='#d8e5ec';ctx.beginPath();ctx.ellipse(0,15,17,7,0,0,Math.PI*2);ctx.fill();
+  roundedRect(-17,-15,34,31,5,'#fff','#d0dce5');
+  ctx.fillStyle='#e8eef2';ctx.beginPath();ctx.ellipse(0,-15,17,7,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#8a9aa8';ctx.beginPath();ctx.ellipse(0,-15,7,3,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#172b42';ctx.beginPath();ctx.arc(-6,-2,2.5,0,7);ctx.arc(6,-2,2.5,0,7);ctx.fill();
+  ctx.strokeStyle='#172b42';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,4,5,0,Math.PI);ctx.stroke();
+  ctx.restore();
+}
+function drawBackground(){
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#a9e5ff');g.addColorStop(1,'#e8fbff');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // bathroom wall tiles
+  ctx.fillStyle='#c8f0fb';ctx.fillRect(0,0,W,310);
+  ctx.strokeStyle='#9edce9';ctx.lineWidth=2;
+  for(let x=0;x<W;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,310);ctx.stroke();}
+  for(let y=0;y<310;y+=55){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  // floor perspective
+  ctx.fillStyle='#6dbbd5';ctx.beginPath();ctx.moveTo(0,290);ctx.lineTo(W,290);ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.fill();
+  ctx.strokeStyle='#9ee3f2';ctx.lineWidth=3;
+  for(let i=0;i<9;i++){let y=300+i*i*3.3;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  for(let x=-300;x<W+300;x+=120){ctx.beginPath();ctx.moveTo(W/2+(x-W/2)*.15,290);ctx.lineTo(x,H);ctx.stroke();}
+  // bathroom details
+  roundedRect(45,55,130,115,12,'#f5ffff','#7abed1');
+  ctx.fillStyle='#8ed8ee';ctx.beginPath();ctx.arc(110,112,32,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(110,112,23,0,Math.PI*2);ctx.fill();
+  roundedRect(770,40,135,170,12,'#f3ffff','#7abed1');
+  roundedRect(785,57,105,135,7,'#a8dce8');
+  ctx.fillStyle='#e9faff';ctx.fillRect(800,72,75,100);
+  ctx.fillStyle='#8acddd';ctx.fillRect(0,285,W,9);
+}
+function drawHazard(h){
+  if(h.type==='puddle'){
+    ctx.fillStyle='#218dd1';ctx.beginPath();ctx.ellipse(h.x,h.y+8,h.w*.72,h.h*.38,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#a7edff';ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(h.x-4,h.y+5,h.w*.4,h.h*.18,-.1,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='bold 13px system-ui';ctx.textAlign='center';ctx.fillText('SLIP!',h.x,h.y+12);
+  }else{
+    ctx.fillStyle='#f04c49';ctx.beginPath();ctx.arc(h.x,h.y,18,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#bd2828';ctx.fillRect(h.x-4,h.y-30,8,32);
+    ctx.fillStyle='#ffb2a9';ctx.beginPath();ctx.arc(h.x-5,h.y-6,5,0,Math.PI*2);ctx.fill();
+  }
+}
+function drawPlayer(){
+  // shadow
+  ctx.fillStyle='#1d6d88aa';ctx.beginPath();ctx.ellipse(player.x,H-49,29,8,0,0,Math.PI*2);ctx.fill();
+  ctx.save();ctx.translate(player.x,player.y+(player.ground?0:3));
+  if(player.inv>0 && Math.floor(elapsed*15)%2===0)ctx.globalAlpha=.5;
+  // little legs
+  ctx.fillStyle='#15334a';ctx.fillRect(-15,28,10,14);ctx.fillRect(5,28,10,14);
+  // paper body
+  roundedRect(-23,-27,46,55,9,'#fff','#d0dce5');
+  ctx.fillStyle='#eaf0f4';ctx.beginPath();ctx.ellipse(0,-27,23,8,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#8598a8';ctx.beginPath();ctx.ellipse(0,-27,9,3.5,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#142b40';ctx.beginPath();ctx.arc(-8,-5,3,0,Math.PI*2);ctx.arc(8,-5,3,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#142b40';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,2,7,0,Math.PI);ctx.stroke();
+  // paper flap
+  ctx.fillStyle='#f7fbff';ctx.strokeStyle='#d0dce5';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(8,9);ctx.lineTo(20,15);ctx.lineTo(18,31);ctx.lineTo(8,27);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.restore();
+}
+function draw(){
+  drawBackground();
+  // distant goal marker
+  roundedRect(W/2-72,30,144,38,12,'#fff2a8','#e5a52c');
+  ctx.fillStyle='#754800';ctx.font='bold 18px system-ui';ctx.textAlign='center';ctx.fillText('COLLECT 15 ROLLS!',W/2,55);
+  items.forEach(it=>drawRoll(it.x,it.y,.72));
+  hazards.forEach(drawHazard);
+  particles.forEach(p=>{ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;});
+  drawPlayer();
+  if(paused&&running){ctx.fillStyle='#00172b99';ctx.fillRect(0,0,W,H);ctx.fillStyle='white';ctx.font='bold 44px system-ui';ctx.textAlign='center';ctx.fillText('PAUSED',W/2,H/2);}
+}
+function burst(x,y,color){for(let i=0;i<12;i++)particles.push({x,y,vx:(Math.random()-.5)*180,vy:(Math.random()-.8)*160,life:.8,r:3+Math.random()*4,color});}
+function finish(win){
+  running=false;gameOver=true;
+  $('message').classList.remove('hidden');
+  $('message').innerHTML=`<div class="card"><h2>${win?'YOU WIN! 🎉':'OH NO! 😵'}</h2><p>${win?'You collected all 15 toilet rolls! Bathroom champion!':'You ran into a hazard. Give it another try!'}</p><p><b>Rolls:</b> ${collected}/15 &nbsp; <b>Score:</b> ${score} &nbsp; <b>Time:</b> ${Math.floor(elapsed)}s</p><button id="again">PLAY AGAIN</button></div>`;
+  $('again').onclick=startGame;
+}
+function startGame(){reset();running=true;$('message').classList.add('hidden');last=performance.now();requestAnimationFrame(loop);}
+function loop(now){
+  if(!running)return;
+  const dt=Math.min((now-last)/1000,.035);last=now;
+  if(!paused){
+    elapsed+=dt;speed=250+Math.min(elapsed*2,100);
+    if(keys.left)player.x-=300*dt;if(keys.right)player.x+=300*dt;
+    player.x=Math.max(35,Math.min(W-35,player.x));
+    player.vy+=900*dt;player.y+=player.vy*dt;
+    if(player.y>=H-105){player.y=H-105;player.vy=0;player.ground=true;}
+    if(player.inv>0)player.inv-=dt;
+    spawnTimer+=dt;
+    if(spawnTimer>1.15){spawnTimer=0;spawnItem();if(Math.random()<.8)spawnHazard();}
+    items.forEach(it=>{it.y+=speed*dt;it.spin+=dt*4;});
+    hazards.forEach(h=>h.y+=speed*dt);
+    items=items.filter(it=>it.y<H+60);hazards=hazards.filter(h=>h.y<H+70);
+    particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=250*dt;p.life-=dt;});
+    particles=particles.filter(p=>p.life>0);
+    for(let i=items.length-1;i>=0;i--){
+      const it=items[i];
+      if(Math.abs(it.x-player.x)<35&&Math.abs(it.y-(player.y+4))<42){
+        items.splice(i,1);collected++;score+=100;burst(it.x,it.y,'#ffe35b');updateHUD();
+        if(collected>=15){finish(true);return;}
+      }
+    }
+    for(const h of hazards){
+      if(player.inv<=0&&Math.abs(h.x-player.x)<(h.w*.55+23)&&Math.abs(h.y-(player.y+8))<(h.h*.4+24)&&player.ground){
+        score=Math.max(0,score-50);player.inv=1.25;player.vy=-230;player.ground=false;burst(player.x,player.y,'#ff6961');
+      }
+    }
+    updateHUD();
+  }
+  draw();requestAnimationFrame(loop);
+}
+function jump(){if(running&&!paused&&player.ground){player.vy=-440;player.ground=false;}}
+window.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp',' '].includes(e.key))e.preventDefault();
+  if(e.key==='ArrowLeft'||e.key.toLowerCase()==='a')keys.left=true;
+  if(e.key==='ArrowRight'||e.key.toLowerCase()==='d')keys.right=true;
+  if(e.key==='ArrowUp'||e.key===' ')jump();
+  if(e.key.toLowerCase()==='p'&&running)paused=!paused;
+  if(e.key==='Enter'&&!running)startGame();
+});
+window.addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft'||e.key.toLowerCase()==='a')keys.left=false;
+  if(e.key==='ArrowRight'||e.key.toLowerCase()==='d')keys.right=false;
+});
+function holdButton(id,dir){
+  const b=$(id),on=e=>{e.preventDefault();keys[dir]=true;},off=e=>{e.preventDefault();keys[dir]=false;};
+  b.addEventListener('pointerdown',on);b.addEventListener('pointerup',off);b.addEventListener('pointerleave',off);b.addEventListener('pointercancel',off);
+}
+holdButton('left','left');holdButton('right','right');
+$('jump').addEventListener('pointerdown',e=>{e.preventDefault();jump();});
+$('start').onclick=startGame;$('restart').onclick=startGame;
+reset();draw();
+})();
+</script>
+</body>
+</html>
